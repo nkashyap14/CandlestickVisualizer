@@ -4,6 +4,7 @@ class Reader(ABC):
 
     @abstractmethod
     def read(self):
+        """This method will read from some path and return a list of stock tickers"""
         pass
     
 
@@ -23,5 +24,13 @@ class LocalReader(Reader):
         pass
 
     def read(self):
-        #read from local text file
+        try:
+            with open(self.path, 'r') as fp:
+                res = []
+                for stock in fp:
+                    res.append(stock[:-1])
+                return res
+        except:
+            print("Exception thrown. Please pass in a valid filename")
+
         pass
