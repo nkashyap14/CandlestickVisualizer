@@ -3,6 +3,24 @@ import yfinance as yf
 from collections import defaultdict
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 import configparser
+import sys
+import pandas as pd
+import mplfinance as mpf
+from datetime import date
+import os
+
+class Adapter(ABC):
+    @abstractmethod
+    def convert(self):
+        """This method will convert a collection of candlestick visualizations into the desired output format
+        and deliver it"""
+        pass 
+
+class Deliverer(ABC):
+    @abstractmethod
+    def deliver(self):
+        """This method will take the results of an adapter"""
+        pass 
 
 class Reader(ABC):
 
@@ -31,10 +49,10 @@ class AzureBlobStorageReader(Reader):
         #use configured client in init to read data 
         container_client = self.__service_client__.get_container_client(self.__container__)
         blob_client = container_client.get_blob_client(self.__blob__)
-        with open("D:\Python Notes\Python Work\CandlestickVisualizer\data\stock.txt", "wb") as file:
-            file.write(blob_client.download_blob().readall())
+        res = blob_client.download_blob(encoding='UTF-8').readall().split('\n')[:-1]
         
         print("File Downloaded")
+        return res
         pass
 
 class LocalReader(Reader):
@@ -56,7 +74,7 @@ class LocalReader(Reader):
 
 class DataProcessor:
     def __init__(self):
-        self.__options__ = ['Close', 'High', 'Low', 'Open']
+        self.__options__ = ['Close', 'High', 'Low', 'Open', 'Volume']
 
     def process_data(self, stocks):
         """This class will read in a list of stocks as data. Apply an intermediate transformation and then send it downstream"""
@@ -74,22 +92,49 @@ class DataProcessor:
                     tempEntry[option] = data[(option, ticker)].loc[date]
                     if pd.isna(data[(option, ticker)].loc[date]) and "date" in tempEntry.keys():
                         del tempEntry["date"]
-                if len(tempEntry.keys()) == 5:
+                if len(tempEntry.keys()) == 6:
                     tickerData[ticker].append(tempEntry)
-        
+            tickerData[ticker] = pd.DataFrame(tickerData[ticker])
+            tickerData[ticker]["date"] = pd.to_datetime(tickerData[ticker]["date"])
+            tickerData[ticker].set_index("date", inplace=True)
+
         return tickerData
 
-class DataTransformer:  
-    def transform_data(self, data):
+class DataVisualizer:  
+
+    def __init__(self, configpath):
+        config = configparser.ConfigParser()
+        config.read(configpath)
+        self.output_path = config.get("OUTPUT", "OUTPUT_PATH") + "\\" + str(date.today())
+        print(self.output_path)
+
+    def createIfDoesntExist(self, dir_path):
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+            print("Directory is created")
+            return
+        print("Directory already exists")
+
+    def visualize_data(self, data, weekOffset=104):
         """"Takes in stock data from Data Processor. Stock data is in form of dict where keys are stock tickers mapped 
-        to daily granularity candlestick level data. This function then outputs a collection of candlestick charts"""
+        to daily granularity candlestick level data. This function then outputs a collection of candlestick charts. The window looked at
+        depends on value of weekoffset. Weekoffset = 10 will plot candlestick charts for the last 10 weeks of data. Defaults to looking
+        at last 2 years of data"""
         #To do: Implement basic candlestick visualization
         #to do: implement the ability to customize the candlestick visualizations in terms of aesthetics
+
+        self.createIfDoesntExist(self.output_path)
+        res = {}
+        for ticker in data:
+            output_path = self.output_path + "\\" + ticker + '.pdf'
+            res[ticker] = mpf.plot(data[ticker].iloc[-weekOffset:], type="candle",
+            title="{} Candlestick Chart for {} Weeks".format(ticker, str(weekOffset)), volume=True, savefig=output_path)
+        return res
         pass
 
     
 class StockDataHandler:
-    def __init__(self, reader: DataReader, processor: DataProcessor, transform: DataTransformer):
+    def __init__(self, reader: Reader, processor: DataProcessor, transform: DataVisualizer):
         self.reader = reader 
         self.processor = processor 
         self.transformer = transformer
@@ -99,8 +144,26 @@ class StockDataHandler:
         processed_data = self.processor.process_data(data)
         transformed_data = self.transformer.transform_data(processed_data)
 
+class VisualizationEmailer:
+    def __init__(self, configpath):
+        pass 
+
+    def email_data(self):
+        pass 
+
+    def zip_data(self):
+        pass
+
 
 def main():
     reader = AzureBlobStorageReader('D:\Python Notes\Python Work\CandlestickVisualizer\env.config')
+    stocks = reader.read()
+    print(stocks)
     processor = DataProcessor()
-    transformer = DataTransformer()
+    transformed_data = processor.process_data(stocks)
+    visualizer = DataVisualizer('D:\Python Notes\Python Work\CandlestickVisualizer\env.config')
+    visualizations = visualizer.visualize_data(transformed_data)
+    print(len(visualizations))
+
+if __name__ == "__main__":
+    main()
