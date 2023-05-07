@@ -8,6 +8,8 @@ import pandas as pd
 import mplfinance as mpf
 from datetime import date
 import os
+import shutil
+import zipfile
 
 class Adapter(ABC):
     @abstractmethod
@@ -134,7 +136,7 @@ class DataVisualizer:
 
     
 class StockDataHandler:
-    def __init__(self, reader: Reader, processor: DataProcessor, transform: DataVisualizer):
+    def __init__(self, reader: Reader, processor: DataProcessor, transformer: DataVisualizer):
         self.reader = reader 
         self.processor = processor 
         self.transformer = transformer
@@ -146,14 +148,29 @@ class StockDataHandler:
 
 class VisualizationEmailer:
     def __init__(self, configpath):
+        config = configparser.ConfigParser()
+        config.read(configpath)
+        self.zip_path = os.path.join(config.get("OUTPUT", "OUTPUT_PATH"), str(date.today()), str(date.today())) + '.zip'
+        self.output_path =  os.path.join(config.get("OUTPUT", "OUTPUT_PATH"), str(date.today()))
+        #self.zip_path = self.output_path + "\\" + str(date.today())
         pass 
 
     def email_data(self):
+        print("Entered email data function \n calling zip data function")
+        self.__zip_data__()
+        print("File zipped \n Generating email")
         pass 
 
-    def zip_data(self):
+    def __zip_data__(self):
+        #shutil.make_archive(self.output_path, 'zip', self.zip_path)
+        with zipfile.ZipFile(self.zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(self.output_path):
+                for file in files:
+                    if '.zip' not in file:
+                        zipf.write(os.path.join(root, file),
+                        os.path.relpath(os.path.join(root, file),
+                        os.path.join(self.output_path, '.')))
         pass
-
 
 def main():
     reader = AzureBlobStorageReader('D:\Python Notes\Python Work\CandlestickVisualizer\env.config')
@@ -164,6 +181,8 @@ def main():
     visualizer = DataVisualizer('D:\Python Notes\Python Work\CandlestickVisualizer\env.config')
     visualizations = visualizer.visualize_data(transformed_data)
     print(len(visualizations))
+    emailer = VisualizationEmailer('D:\Python Notes\Python Work\CandlestickVisualizer\env.config')
+    emailer.email_data()
 
 if __name__ == "__main__":
     main()
