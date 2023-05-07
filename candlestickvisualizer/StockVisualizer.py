@@ -8,21 +8,15 @@ import pandas as pd
 import mplfinance as mpf
 from datetime import date
 import os
-import shutil
 import zipfile
+import smtplib
+from email.mime.text import MIMEText
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
 
-class Adapter(ABC):
-    @abstractmethod
-    def convert(self):
-        """This method will convert a collection of candlestick visualizations into the desired output format
-        and deliver it"""
-        pass 
 
-class Deliverer(ABC):
-    @abstractmethod
-    def deliver(self):
-        """This method will take the results of an adapter"""
-        pass 
+'''This file is the initial monolithic application I created before going on to separate file structure'''
 
 class Reader(ABC):
 
@@ -81,11 +75,11 @@ class DataProcessor:
     def process_data(self, stocks):
         """This class will read in a list of stocks as data. Apply an intermediate transformation and then send it downstream"""
         data = yf.download(stocks)
-        res = self.transform_data(stocks, data)
+        res = self.__transform_data__(stocks, data)
         return res
         pass
 
-    def transform_data(self, stocks, data):
+    def __transform_data__(self, stocks, data):
         tickerData = defaultdict(list)
         for ticker in stocks:
             for date in data.index:
@@ -134,17 +128,6 @@ class DataVisualizer:
         return res
         pass
 
-    
-class StockDataHandler:
-    def __init__(self, reader: Reader, processor: DataProcessor, transformer: DataVisualizer):
-        self.reader = reader 
-        self.processor = processor 
-        self.transformer = transformer
-    
-    def handle_data(self):
-        data = self.reader.read()
-        processed_data = self.processor.process_data(data)
-        transformed_data = self.transformer.transform_data(processed_data)
 
 class VisualizationEmailer:
     def __init__(self, configpath):
@@ -152,6 +135,10 @@ class VisualizationEmailer:
         config.read(configpath)
         self.zip_path = os.path.join(config.get("OUTPUT", "OUTPUT_PATH"), str(date.today()), str(date.today())) + '.zip'
         self.output_path =  os.path.join(config.get("OUTPUT", "OUTPUT_PATH"), str(date.today()))
+        self.user = config.get("EMAIL", "USER")
+        self.sender_email = config.get('EMAIL', "SENDER_EMAIL")
+        self.sender_pass = config.get('EMAIL', 'SENDER_PASSWORD')
+        self.recipient_email = config.get('EMAIL', 'RECIPIENT_EMAIL')
         #self.zip_path = self.output_path + "\\" + str(date.today())
         pass 
 
@@ -159,6 +146,35 @@ class VisualizationEmailer:
         print("Entered email data function \n calling zip data function")
         self.__zip_data__()
         print("File zipped \n Generating email")
+
+        subject = str(date.today()) + " Stocks Candlestick Visualiztaion for {}".format(self.user)
+
+        print('email is {}'.format(self.sender_email))
+
+        with open(self.zip_path, "rb") as attachment:
+
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload((attachment).read())
+            encoders.encode_base64(part)
+            part.add_header(
+                "Content-Disposition",
+                f"attachment; filename= {os.path.basename(self.zip_path)}",
+            )
+
+        message = MIMEMultipart()
+        message['Subject'] = subject
+        message['From'] = self.sender_email
+        message['To'] = self.recipient_email
+        html_part = MIMEText("Find Zip Attached")
+        message.attach(html_part)
+        message.attach(part)
+
+
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server.login(self.sender_email, self.sender_pass)
+        server.sendmail(self.sender_email, self.recipient_email, message.as_string())
+        server.quit()   
+        print("Email has been sent")     
         pass 
 
     def __zip_data__(self):
@@ -172,17 +188,36 @@ class VisualizationEmailer:
                         os.path.join(self.output_path, '.')))
         pass
 
+
+class StockDataHandler:
+    def __init__(self, reader: Reader, processor: DataProcessor, visualizer: DataVisualizer, emailer : VisualizationEmailer):
+        self.reader = reader 
+        self.processor = processor 
+        self.visualizer = visualizer
+        self.emailer = emailer
+    
+    def execute_flow(self):
+        print("Reading stock ticker data")
+        data = self.reader.read()
+        print("Tickers read. Now grabbing raw data")
+        processed_data = self.processor.process_data(data)
+        print("Now visualizing data")
+        visualizations = self.visualizer.visualize_data(processed_data)
+        print("now emailing data")
+        self.emailer.email_data()
+
 def main():
-    reader = AzureBlobStorageReader('D:\Python Notes\Python Work\CandlestickVisualizer\env.config')
-    stocks = reader.read()
-    print(stocks)
+    reader = AzureBlobStorageReader('D:\Python Notes\Python Work\CandlestickVisualizer\config\env.config')
     processor = DataProcessor()
-    transformed_data = processor.process_data(stocks)
-    visualizer = DataVisualizer('D:\Python Notes\Python Work\CandlestickVisualizer\env.config')
-    visualizations = visualizer.visualize_data(transformed_data)
-    print(len(visualizations))
-    emailer = VisualizationEmailer('D:\Python Notes\Python Work\CandlestickVisualizer\env.config')
-    emailer.email_data()
+    visualizer = DataVisualizer('D:\Python Notes\Python Work\CandlestickVisualizer\config\env.config')
+    emailer = VisualizationEmailer('D:\Python Notes\Python Work\CandlestickVisualizer\config\env.config')
+    handler = StockDataHandler(reader, processor, visualizer, emailer)
+    handler.execute_flow()
+    #stocks = reader.read()
+    #print(stocks)
+    #processor = DataProcessor()
+    #transformed_data = processor.process_data(stocks)
+    #visualizer = DataVisualizer('D:\Python Notes\Python Work\CandlestickVisualizer\env.config')
 
 if __name__ == "__main__":
     main()
